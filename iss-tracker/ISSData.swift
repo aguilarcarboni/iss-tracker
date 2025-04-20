@@ -45,4 +45,4 @@ class ISSDataManager: ObservableObject {
             }
         }
     }
-} 
+}

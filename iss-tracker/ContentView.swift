@@ -37,6 +37,7 @@ struct MapView: View {
 }
 
 struct ContentView: View {
+    
     @StateObject private var issDataManager = ISSDataManager()
     @State private var mapRegion = MKCoordinateRegion()
     @State private var issAnnotation: ISSAnnotation?
