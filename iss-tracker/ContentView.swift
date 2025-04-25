@@ -45,94 +45,110 @@ struct ContentView: View {
     @State private var showingFullScreenMap = false
     
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 24) {
-                    if let annotation = issAnnotation {
-                        // Map Container
-                        ZStack(alignment: .topTrailing) {
-                            MapView(mapRegion: $mapRegion, annotation: annotation, isFullScreen: false)
-                                .frame(height: 300)
-                                .shadow(radius: 5)
+        TabView {
+            // Live Tracking Tab
+            NavigationStack {
+                ScrollView {
+                    VStack(spacing: 24) {
+                        if let annotation = issAnnotation {
+                            // Map Container
+                            ZStack(alignment: .topTrailing) {
+                                MapView(mapRegion: $mapRegion, annotation: annotation, isFullScreen: false)
+                                    .frame(height: 300)
+                                    .shadow(radius: 5)
+                                
+                                Button {
+                                    showingFullScreenMap = true
+                                } label: {
+                                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                        .font(.title3)
+                                        .padding(12)
+                                        .background(.ultraThinMaterial)
+                                        .clipShape(Circle())
+                                }
+                                .padding()
+                            }
+                            .padding(.horizontal)
                             
-                            Button {
-                                showingFullScreenMap = true
-                            } label: {
-                                Image(systemName: "arrow.up.left.and.arrow.down.right")
-                                    .font(.title3)
-                                    .padding(12)
-                                    .background(.ultraThinMaterial)
-                                    .clipShape(Circle())
-                            }
-                            .padding()
-                        }
-                        .padding(.horizontal)
-                        
-                        // ISS Information Card
-                        VStack(spacing: 16) {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Label {
-                                        Text("Latitude")
-                                            .foregroundStyle(.secondary)
-                                    } icon: {
-                                        Image(systemName: "location.north.fill")
-                                            .foregroundStyle(.blue)
+                            // ISS Information Card
+                            VStack(spacing: 16) {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Label {
+                                            Text("Latitude")
+                                                .foregroundStyle(.secondary)
+                                        } icon: {
+                                            Image(systemName: "location.north.fill")
+                                                .foregroundStyle(.blue)
+                                        }
+                                        Text("\(annotation.coordinate.latitude, specifier: "%.4f")°")
+                                            .font(.title2)
+                                            .fontWeight(.semibold)
                                     }
-                                    Text("\(annotation.coordinate.latitude, specifier: "%.4f")°")
-                                        .font(.title2)
-                                        .fontWeight(.semibold)
-                                }
-                                
-                                Spacer()
-                                
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Label {
-                                        Text("Longitude")
-                                            .foregroundStyle(.secondary)
-                                    } icon: {
-                                        Image(systemName: "location.fill")
-                                            .foregroundStyle(.blue)
+                                    
+                                    Spacer()
+                                    
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Label {
+                                            Text("Longitude")
+                                                .foregroundStyle(.secondary)
+                                        } icon: {
+                                            Image(systemName: "location.fill")
+                                                .foregroundStyle(.blue)
+                                        }
+                                        Text("\(annotation.coordinate.longitude, specifier: "%.4f")°")
+                                            .font(.title2)
+                                            .fontWeight(.semibold)
                                     }
-                                    Text("\(annotation.coordinate.longitude, specifier: "%.4f")°")
-                                        .font(.title2)
-                                        .fontWeight(.semibold)
                                 }
+                                .padding()
+                                .background(.ultraThinMaterial)
+                                .clipShape(RoundedRectangle(cornerRadius: 16))
                             }
-                            .padding()
-                            .background(.ultraThinMaterial)
-                            .clipShape(RoundedRectangle(cornerRadius: 16))
+                            .padding(.horizontal)
+                            
+                        } else {
+                            ProgressView()
+                                .progressViewStyle(.circular)
                         }
-                        .padding(.horizontal)
                         
-                    } else {
-                        ProgressView()
-                            .progressViewStyle(.circular)
-                    }
-                    
-                    if let error = issDataManager.error {
-                        Text("Error: \(error.localizedDescription)")
-                            .foregroundColor(.red)
-                            .padding()
+                        if let error = issDataManager.error {
+                            Text("Error: \(error.localizedDescription)")
+                                .foregroundColor(.red)
+                                .padding()
+                        }
                     }
                 }
+                .navigationTitle("Live Tracking")
             }
-            .navigationTitle("ISS Tracker")
-            .sheet(isPresented: $showingFullScreenMap) {
-                if let annotation = issAnnotation {
-                    NavigationStack {
-                        MapView(mapRegion: $mapRegion, annotation: annotation, isFullScreen: true)
-                            .ignoresSafeArea()
-                            .navigationTitle("ISS Location")
-                            .navigationBarTitleDisplayMode(.inline)
-                            .toolbar {
-                                ToolbarItem(placement: .topBarTrailing) {
-                                    Button("Done") {
-                                        showingFullScreenMap = false
-                                    }
+            .tabItem {
+                Label("Live", systemImage: "location.fill")
+            }
+            
+            // Settings Tab
+            NavigationStack {
+                SettingsView()
+                    .navigationTitle("Settings")
+            }
+            .tabItem {
+                Label("Settings", systemImage: "gearshape.fill")
+            }
+            
+        }
+        .sheet(isPresented: $showingFullScreenMap) {
+            if let annotation = issAnnotation {
+                NavigationStack {
+                    MapView(mapRegion: $mapRegion, annotation: annotation, isFullScreen: true)
+                        .ignoresSafeArea()
+                        .navigationTitle("ISS Location")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button("Done") {
+                                    showingFullScreenMap = false
                                 }
                             }
-                    }
+                        }
                 }
             }
         }
