@@ -10,57 +10,64 @@ import BackgroundTasks
 
 @main
 struct iss_trackerApp: App {
-    @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-        }
+    init() {
+        registerBackgroundTasks()
     }
-}
-
-class AppDelegate: NSObject, UIApplicationDelegate {
-    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
-        // Register background fetch
+    
+    private func registerBackgroundTasks() {
         BGTaskScheduler.shared.register(forTaskWithIdentifier: "com.iss-tracker.fetch", using: nil) { task in
-            self.handleBackgroundFetch(task: task as! BGAppRefreshTask)
+            handleBackgroundFetch(task: task as! BGAppRefreshTask)
         }
-        
-        // Request notification permissions
-        NotificationManager.shared.requestPermissions()
-        
-        return true
     }
     
-    func application(_ application: UIApplication, performFetchWithCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
-        NotificationManager.shared.checkISSOverhead()
-        completionHandler(.newData)
-    }
-    
-    func handleBackgroundFetch(task: BGAppRefreshTask) {
+    private func handleBackgroundFetch(task: BGAppRefreshTask) {
         // Schedule the next background fetch
         scheduleBackgroundFetch()
         
-        // Create a task expiration handler
-        task.expirationHandler = {
-            task.setTaskCompleted(success: false)
+        // Create a task to fetch ISS position
+        let fetchTask = Task {
+            do {
+                let issDataManager = ISSDataManager()
+                await issDataManager.fetchISSPosition()
+                
+                // If we have a position, check if we should send a notification
+                if let position = issDataManager.currentPosition {
+                    await NotificationManager.shared.sendISSPositionNotification(
+                        latitude: position.latitudeDouble,
+                        longitude: position.longitudeDouble
+                    )
+                }
+            } catch {
+                print("Background fetch failed: \(error)")
+            }
         }
         
-        // Check ISS position
-        NotificationManager.shared.checkISSOverhead()
+        // Set up a task expiration handler
+        task.expirationHandler = {
+            fetchTask.cancel()
+        }
         
-        // Mark the task as completed
-        task.setTaskCompleted(success: true)
+        // Set up a completion handler
+        Task {
+            await fetchTask.value
+            task.setTaskCompleted(success: true)
+        }
     }
     
-    func scheduleBackgroundFetch() {
+    private func scheduleBackgroundFetch() {
         let request = BGAppRefreshTaskRequest(identifier: "com.iss-tracker.fetch")
-        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60) // 15 minutes
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60) // 15 minutes from now
         
         do {
             try BGTaskScheduler.shared.submit(request)
         } catch {
             print("Could not schedule background fetch: \(error)")
+        }
+    }
+    
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
         }
     }
 }

@@ -7,6 +7,7 @@
 
 import SwiftUI
 import MapKit
+import BackgroundTasks
 
 class ISSAnnotation: Identifiable {
     let id = UUID()
@@ -39,6 +40,7 @@ struct MapView: View {
 struct ContentView: View {
     
     @StateObject private var issDataManager = ISSDataManager()
+    @StateObject private var notificationManager = NotificationManager.shared
     @State private var mapRegion = MKCoordinateRegion()
     @State private var issAnnotation: ISSAnnotation?
     @State private var timer: Timer?
@@ -135,28 +137,21 @@ struct ContentView: View {
             }
             
         }
-        .sheet(isPresented: $showingFullScreenMap) {
-            if let annotation = issAnnotation {
-                NavigationStack {
-                    MapView(mapRegion: $mapRegion, annotation: annotation, isFullScreen: true)
-                        .ignoresSafeArea()
-                        .navigationTitle("ISS Location")
-                        .navigationBarTitleDisplayMode(.inline)
-                        .toolbar {
-                            ToolbarItem(placement: .topBarTrailing) {
-                                Button("Done") {
-                                    showingFullScreenMap = false
-                                }
-                            }
-                        }
-                }
-            }
-        }
         .onAppear {
+            // Request notification permissions
+            notificationManager.requestPermissions()
+            
+            // Schedule background fetch
+            let request = BGAppRefreshTaskRequest(identifier: "com.iss-tracker.fetch")
+            request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60) // 15 minutes from now
+            try? BGTaskScheduler.shared.submit(request)
+            
+            // Initial fetch
             Task {
                 await issDataManager.fetchISSPosition()
             }
             
+            // Set up timer for polling every 5 seconds
             timer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
                 Task {
                     await issDataManager.fetchISSPosition()

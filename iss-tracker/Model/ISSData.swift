@@ -1,4 +1,5 @@
 import Foundation
+import CoreLocation
 
 struct ISSResponse: Codable {
     let message: String
@@ -23,11 +24,16 @@ struct ISSPosition: Codable, Equatable {
     var longitudeDouble: Double {
         Double(longitude) ?? 0.0
     }
+    
+    var location: CLLocation {
+        CLLocation(latitude: latitudeDouble, longitude: longitudeDouble)
+    }
 }
 
 class ISSDataManager: ObservableObject {
     @Published var currentPosition: ISSPosition?
     @Published var error: Error?
+    private let notificationManager = NotificationManager.shared
     
     func fetchISSPosition() async {
         do {
@@ -38,6 +44,14 @@ class ISSDataManager: ObservableObject {
             DispatchQueue.main.async {
                 self.currentPosition = response.issPosition
                 self.error = nil
+                
+                // Send notification only if ISS is overhead
+                Task {
+                    await self.notificationManager.sendISSPositionNotification(
+                        latitude: response.issPosition.latitudeDouble,
+                        longitude: response.issPosition.longitudeDouble
+                    )
+                }
             }
         } catch {
             DispatchQueue.main.async {

@@ -2,19 +2,28 @@ import Foundation
 import UserNotifications
 import CoreLocation
 import ActivityKit
+import os.log
 
-class NotificationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
+class NotificationManager: NSObject, ObservableObject, CLLocationManagerDelegate, UNUserNotificationCenterDelegate {
     static let shared = NotificationManager()
     private let locationManager = CLLocationManager()
     private let notificationCenter = UNUserNotificationCenter.current()
+    private let logger = Logger(subsystem: "com.iss-tracker", category: "Notifications")
     
     @Published var isAuthorized = false
-    private var liveActivity: Activity<ISSLiveActivityAttributes>?
+    @Published var lastCheckTime: Date?
+    @Published var lastISSLocation: CLLocation?
+    @Published var userLocation: CLLocation?
     
+    // Maximum distance in kilometers to consider ISS as "overhead"
+    private let maxOverheadDistance: CLLocationDistance = 1000 // 1000 km
+
     override init() {
         super.init()
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
+        locationManager.distanceFilter = 1000 // Update location every 1km
+        notificationCenter.delegate = self
     }
     
     func requestPermissions() {
@@ -22,104 +31,122 @@ class NotificationManager: NSObject, ObservableObject, CLLocationManagerDelegate
         notificationCenter.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             DispatchQueue.main.async {
                 self.isAuthorized = granted
+                if let error = error {
+                    self.logger.error("Failed to request notification permissions: \(error.localizedDescription)")
+                } else {
+                    self.logger.info("Notification permissions granted: \(granted)")
+                }
             }
         }
         
-        // Request location permissions
-        locationManager.requestWhenInUseAuthorization()
+        // Request location permissions with always authorization
+        locationManager.requestAlwaysAuthorization()
+        locationManager.startUpdatingLocation()
     }
     
-    func scheduleISSOverheadNotification() {
+    func isISSOverhead(issLocation: CLLocation) -> Bool {
+        guard let userLocation = userLocation else { return false }
+        
+        let distance = userLocation.distance(from: issLocation)
+        print("Distance: \(distance)")
+        return distance <= maxOverheadDistance
+    }
+    
+    func sendISSPositionNotification(latitude: Double, longitude: Double) async {
+        let issLocation = CLLocation(latitude: latitude, longitude: longitude)
+        
+        // Only send notification if ISS is overhead
+        guard isISSOverhead(issLocation: issLocation) else {
+            logger.info("ISS is not overhead, skipping notification")
+            return
+        }
+        
         let content = UNMutableNotificationContent()
         content.title = "ISS Overhead!"
-        content.body = "The International Space Station is currently passing over your location!"
+        content.body = String(format: "The International Space Station is currently flying overhead at %.4f°N, %.4f°E", latitude, longitude)
         content.sound = .default
         
-        // Create a trigger that will check every 15 minutes
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 900, repeats: true)
-        
         let request = UNNotificationRequest(
-            identifier: "ISSOverhead",
+            identifier: UUID().uuidString,
             content: content,
-            trigger: trigger
+            trigger: nil
         )
         
-        notificationCenter.add(request)
+        do {
+            try await notificationCenter.add(request)
+            logger.info("ISS overhead notification sent successfully")
+            
+            DispatchQueue.main.async {
+                self.lastCheckTime = Date()
+                self.lastISSLocation = issLocation
+            }
+        } catch {
+            logger.error("Failed to send ISS overhead notification: \(error.localizedDescription)")
+        }
     }
     
-    func checkISSOverhead() {
-        guard let userLocation = locationManager.location else { return }
-        
-        // Fetch ISS position and check if it's overhead
+    func sendTestNotification() {
         Task {
+            let content = UNMutableNotificationContent()
+            content.title = "Test Notification"
+            content.body = "This is a test notification to verify the system is working."
+            content.sound = .default
+            
+            let request = UNNotificationRequest(
+                identifier: UUID().uuidString,
+                content: content,
+                trigger: nil
+            )
+            
             do {
-                guard let url = URL(string: "http://api.open-notify.org/iss-now.json") else { return }
-                let (data, _) = try await URLSession.shared.data(from: url)
-                let response = try JSONDecoder().decode(ISSResponse.self, from: data)
-                
-                let issLocation = CLLocation(
-                    latitude: response.issPosition.latitudeDouble,
-                    longitude: response.issPosition.longitudeDouble
-                )
-                
-                let distance = userLocation.distance(from: issLocation)
-                
-                // Update Live Activity if enabled
-                if UserDefaults.standard.bool(forKey: "isLiveActivityEnabled") {
-                    await updateLiveActivity(distance: distance, latitude: response.issPosition.latitudeDouble, longitude: response.issPosition.longitudeDouble)
-                }
-                
-                // If ISS is within 100km of user's location
-                if distance < 100000 {
-                    let content = UNMutableNotificationContent()
-                    content.title = "ISS Overhead!"
-                    content.body = "The International Space Station is currently passing over your location!"
-                    content.sound = .default
-                    
-                    let request = UNNotificationRequest(
-                        identifier: UUID().uuidString,
-                        content: content,
-                        trigger: nil
-                    )
-                    
-                    try await notificationCenter.add(request)
-                }
+                try await notificationCenter.add(request)
+                logger.info("Test notification sent successfully")
             } catch {
-                print("Error checking ISS position: \(error)")
+                logger.error("Failed to send test notification: \(error.localizedDescription)")
             }
         }
     }
     
-    private func updateLiveActivity(distance: Double, latitude: Double, longitude: Double) async {
-        let attributes = ISSLiveActivityAttributes()
-        let contentState = ISSLiveActivityAttributes.ContentState(
-            distance: distance,
-            latitude: latitude,
-            longitude: longitude
-        )
-        
-        if let existingActivity = liveActivity {
-            await existingActivity.update(using: contentState)
-        } else {
-            do {
-                let activity = try Activity.request(
-                    attributes: attributes,
-                    contentState: contentState,
-                    pushType: nil
-                )
-                liveActivity = activity
-            } catch {
-                print("Error starting Live Activity: \(error)")
-            }
+    // MARK: - Notification Management
+    func getNotifications() async throws -> [UNNotificationRequest] {
+        return await notificationCenter.pendingNotificationRequests()
+    }
+    
+    func removeNotifications() async throws {
+        notificationCenter.removeAllPendingNotificationRequests()
+    }
+    
+    // MARK: - CLLocationManagerDelegate
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let location = locations.last else { return }
+        DispatchQueue.main.async {
+            self.userLocation = location
         }
     }
     
-    func endLiveActivity() {
-        Task {
-            if let activity = liveActivity {
-                await activity.end(dismissalPolicy: .immediate)
-                liveActivity = nil
-            }
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        logger.error("Location manager failed with error: \(error.localizedDescription)")
+    }
+    
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        switch manager.authorizationStatus {
+        case .authorizedWhenInUse, .authorizedAlways:
+            manager.startUpdatingLocation()
+        case .denied, .restricted:
+            logger.error("Location access denied")
+        case .notDetermined:
+            manager.requestWhenInUseAuthorization()
+        @unknown default:
+            break
         }
+    }
+    
+    // MARK: - UNUserNotificationCenterDelegate
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
+    }
+    
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        completionHandler()
     }
 } 
